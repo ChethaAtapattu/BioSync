@@ -1,6 +1,6 @@
 # BioSync Planner — ESP32 Biometric Task & Break Recommendation MVP
 
-> **Student Embedded-Systems Submission** — Due **October 5, 2026**  
+> **Student Embedded-Systems Submission** 
 > **Course / Lab Project**: Embedded Systems & Biosensing MVP Prototype
 
 ---
