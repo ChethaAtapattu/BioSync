@@ -1,6 +1,6 @@
 # BioSync Planner — ESP32 Biometric Task & Break Recommendation MVP
 
-> **Student Embedded-Systems Submission** 
+> **Student Embedded-Systems Submission**  
 > **Course / Lab Project**: Embedded Systems & Biosensing MVP Prototype
 
 ---
@@ -35,20 +35,22 @@ BioSync/
 │   └── BioSync/              # Arduino IDE ESP32 Firmware Sketch
 │       ├── BioSync.ino       # Main Arduino sketch file (100Hz sampling, 60s RMSSD, gravity removal)
 │       ├── config.h          # Wi-Fi credentials, MQTT broker IP & pin definitions
-│       ├── pulse_processor.h # MAX30102 signal processing & peak detection header
+│       ├── pulse_processor.h # MAX30102 signal processing & peak detection header (240 samples buffer)
 │       ├── pulse_processor.cpp
 │       ├── motion_processor.h# MPU6050 accelerometer gravity removal header
 │       └── motion_processor.cpp
-├── tests/                    # Automated Vitest test suite (fake clock, scoring, ranking)
+├── tests/                    # Automated Vitest test suite (fake clock, scoring, ranking, integration)
 │   ├── scoring.test.ts       # Test score boundaries, null inputs, motion gating, stale data
 │   ├── planner.test.ts       # Test difficulty matching, overdue priority, bounded urgency
 │   ├── alerts.test.ts        # Test 10-consecutive-minute low score rule & invalid data interruption
-│   └── ingestion.test.ts     # Test sensor contract validation, deduplication, timestamping
+│   ├── ingestion.test.ts     # Test sensor contract validation, deduplication, timestamping
+│   └── hardware_integration.test.ts # Test hardware selection, source switching, bootId reboots
 ├── docs/
 │   ├── WIRING.md             # Hardware pinout table & I2C bus configuration
 │   ├── SHOPPING_CHECKLIST.md # Lab component purchasing checklist
 │   ├── DEMO_SCRIPT.md        # 3-minute evaluator demonstration guide
-│   └── SETUP_GUIDE.md       # Arduino IDE setup, board packages, libraries, & execution guide
+│   ├── SETUP_GUIDE.md       # Arduino IDE setup, board packages, libraries, & execution guide
+│   └── MOSQUITTO_SETUP.md    # Local Mosquitto MQTT broker LAN listener & firewall guide
 ├── .env.example              # Environment variables template
 └── README.md                 # Project documentation & status report
 ```
@@ -64,6 +66,7 @@ All sensor readings (whether from hardware ESP32 over MQTT or from the repeatabl
   "deviceId": "ESP32-HW-001",
   "sequence": 142,
   "uptimeMs": 450000,
+  "bootId": "BOOT-A1B2C3D4-E5F67890",
   "source": "hardware",
   "hrBpm": 72.0,
   "pulseRmssdMs": 48.5,
@@ -72,10 +75,11 @@ All sensor readings (whether from hardware ESP32 over MQTT or from the repeatabl
 }
 ```
 
+- **`bootId`**: Unique identifier generated on each ESP32 boot (`esp_random()`). Used to distinguish valid device reboots from duplicate/out-of-order sequence packets.
 - **`motion`**: Normalized to `0.0` – `1.0`. Estimated after subtracting gravity ($9.80665 \text{ m/s}^2$) from accelerometer magnitude.
 - **`quality`**: `"warming_up"` | `"good"` | `"poor"` | `"no_contact"`.
 - **Backend Enriched Field**: Backend appends ISO timestamp `receivedAt`. ESP32 clock synchronization is **not** assumed.
-- **Validation**: Rejects malformed JSON, rejects duplicate sequence numbers per `deviceId`, and ignores any device-supplied `focusScore`.
+- **Validation**: Rejects malformed JSON, rejects duplicate sequence numbers per `deviceId` within the same boot, and ignores any device-supplied `focusScore`.
 
 ---
 
@@ -104,7 +108,7 @@ $$\text{score} = \text{clamp}(\text{base} - \text{penalty}, 0, 100)$$
 | **`UNAVAILABLE`** | `null` | Ranked by deadline urgency alone | Slate Badge; signal gated/stale/warming up |
 
 - **Motion Gate**: Motion is a signal-quality gate ($>0.45$ or `quality !== 'good'` returns `score = null`), not a concentration reward.
-- **Stale Telemetry**: State marked stale after 15 seconds without update.
+- **Stale Telemetry**: State marked stale after 15 seconds without update from active source.
 
 ---
 
@@ -113,9 +117,9 @@ $$\text{score} = \text{clamp}(\text{base} - \text{penalty}, 0, 100)$$
 ### Required Board Package & Libraries
 - **Board Package**: Espressif ESP32 (`https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`), select board **ESP32 Dev Module**.
 - **Required Libraries**:
-  1. `PubSubClient` by Nick O'Leary
-  2. `ArduinoJson` by Benoit Blanchon (v6.x)
-  3. `SparkFun MAX3010x Pulse and Proximity Sensor Library`
+  1. `PubSubClient` by Nick O'Leary (`mqttClient.setBufferSize(512)`)
+  2. `ArduinoJson` by Benoit Blanchon (v6.21.4)
+  3. `SparkFun MAX3010x Pulse and Proximity Sensor Library` (`setup(0x1F, 1, 2, 100, 411, 4096)`)
   4. `Adafruit MPU6050`
   5. `Adafruit Unified Sensor`
 
@@ -130,7 +134,7 @@ $$\text{score} = \text{clamp}(\text{base} - \text{penalty}, 0, 100)$$
 ## 6. Execution Strategy & Verification
 
 1. **Build & Verify Simulated Dashboard First**: Run backend + frontend with the built-in simulator engine (`rested`, `elevated_pulse`, `prolonged_session`, `motion_artifact`, `no_finger_contact`, `disconnected`).
-2. **Connect Physical Sensors**: Flash the ESP32 via Arduino IDE and stream hardware telemetry over MQTT to the backend.
+2. **Connect Physical Sensors**: Configure Mosquitto (see `docs/MOSQUITTO_SETUP.md`), flash ESP32 via Arduino IDE, and stream hardware telemetry over MQTT to the backend.
 
 ### Quick Start Commands
 
@@ -144,6 +148,6 @@ npm run build:shared
 # 3. Launch Backend (Port 3001) & Frontend (Port 3000)
 npm start
 
-# 4. Run automated test suite
+# 4. Run automated test suite (28/28 tests passing)
 npm test
 ```

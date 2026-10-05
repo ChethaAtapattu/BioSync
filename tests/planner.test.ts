@@ -3,7 +3,7 @@ import { rankTasks, calculateDeadlineUrgency } from "../shared/src/planner.js";
 import { Task } from "../shared/src/types.js";
 
 describe("Biometric Task Planner", () => {
-  const mockNow = "2026-10-05T10:00:00.000Z";
+  const mockNow = "2026-11-01T10:00:00.000Z";
 
   const sampleTasks: Task[] = [
     {
@@ -11,7 +11,7 @@ describe("Biometric Task Planner", () => {
       title: "Easy Task",
       difficulty: 1,
       estimatedMinutes: 15,
-      deadline: "2026-10-05T18:00:00.000Z", // Due in 8h
+      deadline: "2026-11-01T18:00:00.000Z", // Due in 8h
       status: "pending",
       createdAt: mockNow,
       updatedAt: mockNow,
@@ -21,7 +21,7 @@ describe("Biometric Task Planner", () => {
       title: "Medium Task",
       difficulty: 3,
       estimatedMinutes: 30,
-      deadline: "2026-10-05T18:00:00.000Z", // Due in 8h
+      deadline: "2026-11-01T18:00:00.000Z", // Due in 8h
       status: "pending",
       createdAt: mockNow,
       updatedAt: mockNow,
@@ -31,7 +31,7 @@ describe("Biometric Task Planner", () => {
       title: "Hard Task",
       difficulty: 5,
       estimatedMinutes: 60,
-      deadline: "2026-10-05T18:00:00.000Z", // Due in 8h
+      deadline: "2026-11-01T18:00:00.000Z", // Due in 8h
       status: "pending",
       createdAt: mockNow,
       updatedAt: mockNow,
@@ -65,7 +65,7 @@ describe("Biometric Task Planner", () => {
         title: "Critical Overdue Task",
         difficulty: 1,
         estimatedMinutes: 20,
-        deadline: "2026-10-05T09:30:00.000Z", // Overdue by 30 mins
+        deadline: "2026-11-01T09:30:00.000Z", // Overdue by 30 mins
         status: "pending",
         createdAt: mockNow,
         updatedAt: mockNow,

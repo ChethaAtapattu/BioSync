@@ -83,7 +83,7 @@ void publishVitalsSummary() {
     PulseMetrics p = pulseProc.getMetrics();
     float motion = motionProc.getNormalizedMotion();
 
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<384> doc;
     doc["deviceId"] = DEVICE_ID;
     doc["sequence"] = sequenceNumber++;
     doc["uptimeMs"] = millis();
@@ -101,13 +101,18 @@ void publishVitalsSummary() {
     doc["motion"] = round(motion * 100.0f) / 100.0f;
     doc["quality"] = pulseProc.getQualityString(p.quality);
 
-    char buffer[256];
-    serializeJson(doc, buffer);
+    char buffer[384];
+    size_t len = serializeJson(doc, buffer, sizeof(buffer));
 
     if (mqttClient.connected()) {
-        mqttClient.publish(MQTT_TOPIC_VITALS, buffer);
-        Serial.print("[MQTT PUBLISH] ");
-        Serial.println(buffer);
+        bool published = mqttClient.publish(MQTT_TOPIC_VITALS, (const uint8_t*)buffer, len, false);
+        if (published) {
+            Serial.print("[MQTT PUBLISH SUCCESS] ");
+            Serial.println(buffer);
+        } else {
+            Serial.print("[MQTT PUBLISH FAILED] Buffer length: ");
+            Serial.println(len);
+        }
     } else {
         Serial.print("[SERIAL DEBUG SUMMARY LOG] ");
         Serial.println(buffer);
@@ -129,19 +134,19 @@ void setup() {
 
     Wire.begin(SDA_PIN, SCL_PIN, I2C_CLOCK_SPEED);
 
-    // Initialize MAX30102 via SparkFun MAX30105 library API
+    // Initialize MAX30102 using SparkFun library's numeric API:
+    // setup(0x1F, 1, 2, 100, 411, 4096)
+    // 0x1F = powerLevel (6.4mA LED current)
+    // 1 = sampleAverage (1x / no sample averaging)
+    // 2 = ledMode (2 = Red + IR mode)
+    // 100 = sampleRate (100 samples/second)
+    // 411 = pulseWidth (411 microsecond pulse width)
+    // 4096 = adcRange (4096 ADC range / 15-bit)
     if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
         Serial.println("[ERROR] MAX30102 pulse sensor not found at 0x57. Check SDA/SCL wiring!");
     } else {
         Serial.println("[OK] MAX30102 initialized successfully!");
-        byte powerLevel = 0x1F;       // 6.4mA LED current
-        byte sampleAverage = SAMPLEAVG_4; // 4x sample averaging
-        byte ledMode = MODE_MULTILED;  // Red + IR mode (MODE_MULTILED)
-        int sampleRate = SAMPLERATE_100; // 100 Hz effective sample rate per channel
-        int pulseWidth = PULSEWIDTH_411; // 411us pulse width
-        int adcRange = ADCRANGE_4096;   // 15-bit ADC range
-
-        particleSensor.setup(powerLevel, sampleAverage, ledMode, sampleRate, pulseWidth, adcRange);
+        particleSensor.setup(0x1F, 1, 2, 100, 411, 4096);
         particleSensor.setPulseAmplitudeRed(0x1F);
         particleSensor.setPulseAmplitudeGreen(0);
     }
@@ -156,14 +161,18 @@ void setup() {
     }
 
     pulseProc.init();
+
+    // Configure PubSubClient packet buffer size to 512 bytes to accommodate bootId and payload
+    mqttClient.setBufferSize(512);
     mqttClient.setServer(MQTT_BROKER_HOST, MQTT_BROKER_PORT);
+
     setupWiFi();
 }
 
 void loop() {
     uint32_t nowMs = millis();
 
-    // 1. Non-blocking continuous I2C sampling via MAX3010x FIFO check
+    // 1. Non-blocking continuous 100Hz I2C sampling via MAX3010x FIFO check (Executed BEFORE network calls)
     if (nowMs - lastSampleMs >= 10) {
         lastSampleMs = nowMs;
 
@@ -182,7 +191,7 @@ void loop() {
         }
     }
 
-    // 2. Non-blocking WiFi & MQTT Reconnect Logic (Never blocks 100Hz sampling)
+    // 2. Non-blocking WiFi & MQTT Reconnect Logic (Never blocks continuous 100Hz sampling)
     if (WiFi.status() == WL_CONNECTED) {
         if (!mqttClient.connected()) {
             static uint32_t lastMqttReconnect = 0;
