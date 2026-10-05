@@ -4,6 +4,7 @@ export interface SensorPayload {
     deviceId: string;
     sequence: number;
     uptimeMs: number;
+    bootId?: string;
     source: SensorSource;
     hrBpm: number | null;
     pulseRmssdMs: number | null;
@@ -60,6 +61,7 @@ export interface StudySessionState {
     accumulatedMinutes: number;
     lowScoreConsecutiveMs: number;
     activeScenario: SimulationScenario;
+    selectedSource: SensorSource;
 }
 export type SimulationScenario = "rested" | "elevated_pulse" | "prolonged_session" | "motion_artifact" | "no_finger_contact" | "disconnected";
 export interface RecommendationResponse {

@@ -31,6 +31,7 @@ MotionProcessor motionProc;
 uint32_t sequenceNumber = 1;
 uint32_t lastPublishMs = 0;
 uint32_t lastSampleMs = 0;
+const char* bootId = "BOOT-ESP32-1001"; // Boot identifier for reboot tracking
 
 void setupWiFi() {
     delay(10);
@@ -39,8 +40,8 @@ void setupWiFi() {
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     uint8_t attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-        delay(500);
+    while (WiFi.status() != WL_CONNECTED && attempts < 10) {
+        delay(300);
         Serial.print(".");
         attempts++;
     }
@@ -50,7 +51,7 @@ void setupWiFi() {
         Serial.print("[WiFi] ESP32 IP Address: ");
         Serial.println(WiFi.localIP());
     } else {
-        Serial.println("\n[WiFi] Connection timed out. Will retry non-blockingly in loop().");
+        Serial.println("\n[WiFi] Connection timed out. Non-blocking reconnect active in loop().");
     }
 }
 
@@ -67,7 +68,7 @@ void reconnectMQTT() {
         } else {
             Serial.print(" FAILED (rc=");
             Serial.print(mqttClient.state());
-            Serial.println("). Retrying in 5 seconds.");
+            Serial.println("). Non-blocking retry active.");
         }
     }
 }
@@ -80,6 +81,7 @@ void publishVitalsSummary() {
     doc["deviceId"] = DEVICE_ID;
     doc["sequence"] = sequenceNumber++;
     doc["uptimeMs"] = millis();
+    doc["bootId"] = bootId;
     doc["source"] = "hardware";
 
     if (p.quality == GOOD) {
@@ -117,17 +119,17 @@ void setup() {
 
     Wire.begin(SDA_PIN, SCL_PIN, I2C_CLOCK_SPEED);
 
-    // Initialize MAX30102
+    // Initialize MAX30102 via SparkFun MAX30105 library API
     if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
         Serial.println("[ERROR] MAX30102 pulse sensor not found at 0x57. Check SDA/SCL wiring!");
     } else {
         Serial.println("[OK] MAX30102 initialized successfully!");
-        byte powerLevel = 0x1F;
-        byte sampleAverage = SAMPLEAVG_4;
-        byte ledMode = MODE_MULTILED;
-        int sampleRate = SAMPLERATE_100;
-        int pulseWidth = PULSEWIDTH_411;
-        int adcRange = ADCRANGE_4096;
+        byte powerLevel = 0x1F;       // 6.4mA LED current
+        byte sampleAverage = SAMPLEAVG_4; // 4x sample averaging
+        byte ledMode = MODE_MULTILED;  // Red + IR mode
+        int sampleRate = SAMPLERATE_100; // 100 Hz effective sample rate
+        int pulseWidth = PULSEWIDTH_411; // 411us pulse width
+        int adcRange = ADCRANGE_4096;   // 15-bit ADC range
 
         particleSensor.setup(powerLevel, sampleAverage, ledMode, sampleRate, pulseWidth, adcRange);
         particleSensor.setPulseAmplitudeRed(0x1F);
@@ -149,24 +151,28 @@ void setup() {
 }
 
 void loop() {
-    // 1. Continuous Non-blocking Sampling @ ~100Hz (10ms sampling interval)
     uint32_t nowMs = millis();
+
+    // 1. Non-blocking continuous 100Hz I2C sampling via MAX3010x FIFO check
     if (nowMs - lastSampleMs >= 10) {
         lastSampleMs = nowMs;
 
-        uint32_t red = particleSensor.getRed();
-        uint32_t ir = particleSensor.getIR();
+        particleSensor.check(); // Check sensor FIFO buffer
+        while (particleSensor.available()) {
+            uint32_t red = particleSensor.getFIFORed();
+            uint32_t ir = particleSensor.getFIFOIR();
 
-        sensors_event_t a, g, temp;
-        mpu.getEvent(&a, &g, &temp);
+            sensors_event_t a, g, temp;
+            mpu.getEvent(&a, &g, &temp);
 
-        motionProc.processAccel(a.acceleration.x, a.acceleration.y, a.acceleration.z);
-        pulseProc.processSample(red, ir, motionProc.getNormalizedMotion());
+            motionProc.processAccel(a.acceleration.x, a.acceleration.y, a.acceleration.z);
+            pulseProc.processSample(red, ir, motionProc.getNormalizedMotion());
 
-        particleSensor.nextSample();
+            particleSensor.nextSample(); // Advance FIFO read pointer
+        }
     }
 
-    // 2. Non-blocking WiFi & MQTT Reconnect Logic
+    // 2. Non-blocking WiFi & MQTT Reconnect Logic (Never blocks continuous 100Hz I2C loop)
     if (WiFi.status() == WL_CONNECTED) {
         if (!mqttClient.connected()) {
             static uint32_t lastMqttReconnect = 0;

@@ -1,5 +1,5 @@
 import { Router } from "express";
-export function createSessionsRouter(db, getSessionState, updateSessionState, onSessionChanged) {
+export function createSessionsRouter(db, getSessionState, updateSessionState, onResetAlertState, onSessionChanged) {
     const router = Router();
     // GET /api/session
     router.get("/", (req, res) => {
@@ -36,6 +36,22 @@ export function createSessionsRouter(db, getSessionState, updateSessionState, on
             isActive: true,
             accumulatedMinutes: 0,
             lowScoreConsecutiveMs: 0,
+        }));
+        // Reset backend alert state deterministically on session reset
+        onResetAlertState();
+        if (onSessionChanged)
+            onSessionChanged();
+        res.json(getSessionState());
+    });
+    // POST /api/session/source - Select active telemetry source (simulated vs hardware)
+    router.post("/source", (req, res) => {
+        const { source } = req.body;
+        if (source !== "simulated" && source !== "hardware") {
+            return res.status(400).json({ error: "Invalid source. Must be 'simulated' or 'hardware'" });
+        }
+        updateSessionState((prev) => ({
+            ...prev,
+            selectedSource: source,
         }));
         if (onSessionChanged)
             onSessionChanged();

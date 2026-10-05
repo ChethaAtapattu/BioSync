@@ -1,11 +1,12 @@
 import { Router } from "express";
-import { StudySessionState } from "@biosync/shared";
+import { SensorSource, StudySessionState } from "@biosync/shared";
 import { SqliteDatabaseManager } from "../database/sqliteRepository.js";
 
 export function createSessionsRouter(
   db: SqliteDatabaseManager,
   getSessionState: () => StudySessionState,
   updateSessionState: (updater: (prev: StudySessionState) => StudySessionState) => void,
+  onResetAlertState: () => void,
   onSessionChanged?: () => void
 ): Router {
   const router = Router();
@@ -47,6 +48,24 @@ export function createSessionsRouter(
       accumulatedMinutes: 0,
       lowScoreConsecutiveMs: 0,
     }));
+    // Reset backend alert state deterministically on session reset
+    onResetAlertState();
+    if (onSessionChanged) onSessionChanged();
+    res.json(getSessionState());
+  });
+
+  // POST /api/session/source - Select active telemetry source (simulated vs hardware)
+  router.post("/source", (req, res) => {
+    const { source } = req.body;
+    if (source !== "simulated" && source !== "hardware") {
+      return res.status(400).json({ error: "Invalid source. Must be 'simulated' or 'hardware'" });
+    }
+
+    updateSessionState((prev) => ({
+      ...prev,
+      selectedSource: source as SensorSource,
+    }));
+
     if (onSessionChanged) onSessionChanged();
     res.json(getSessionState());
   });

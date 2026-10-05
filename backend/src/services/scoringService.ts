@@ -2,45 +2,51 @@ import {
   calculateFocusScore,
   ProcessedVitals,
   SensorPayload,
+  SensorSource,
 } from "@biosync/shared";
 import { SqliteDatabaseManager } from "../database/sqliteRepository.js";
 
-export class ScoringService {
-  private lastSequenceMap: Map<string, number> = new Map();
-  private latestVitals: ProcessedVitals | null = null;
-  private lastUpdateTimestamp: number = Date.now();
-  private staleTimeoutMs: number = 15000; // 15 seconds stale limit
+interface DeviceState {
+  sequence: number;
+  uptimeMs: number;
+  bootId?: string;
+}
 
-  constructor(private db: SqliteDatabaseManager) {
-    // Periodically check for stale readings (every 3 seconds)
-    setInterval(() => this.checkStaleStatus(), 3000);
-  }
+export class ScoringService {
+  private deviceStateMap: Map<string, DeviceState> = new Map();
+  private latestVitalsBySource: Map<SensorSource, ProcessedVitals> = new Map();
+  private lastUpdateTimestampBySource: Map<SensorSource, number> = new Map();
+  private staleTimeoutMs: number = 15000; // 15 seconds stale threshold
+
+  constructor(private db: SqliteDatabaseManager) {}
 
   /**
-   * Processes an incoming raw sensor payload, validates schema, deduplicates sequence numbers,
-   * adds backend receivedAt timestamp, and calculates Focus Score and Energy Band.
+   * Processes an incoming raw sensor payload.
+   * Enforces numeric range validations, reboot detection, source selection filtering,
+   * deduplication, backend ISO timestamping, and Focus Score calculation.
    */
   public processSensorPayload(
     rawPayload: any,
-    currentSessionMinutes: number = 0
-  ): { vitals: ProcessedVitals | null; error?: string } {
-    // 1. Schema Validation
+    currentSessionMinutes: number = 0,
+    activeSelectedSource: SensorSource = "simulated"
+  ): { vitals: ProcessedVitals | null; error?: string; ignoredReason?: string } {
+    // 1. Schema & Structure Validation
     if (!rawPayload || typeof rawPayload !== "object") {
       return { vitals: null, error: "Malformed payload: Not an object" };
     }
 
-    const { deviceId, sequence, uptimeMs, source, hrBpm, pulseRmssdMs, motion, quality } = rawPayload;
+    const { deviceId, sequence, uptimeMs, bootId, source, hrBpm, pulseRmssdMs, motion, quality } = rawPayload;
 
-    if (!deviceId || typeof deviceId !== "string") {
+    if (!deviceId || typeof deviceId !== "string" || deviceId.trim().length === 0) {
       return { vitals: null, error: "Malformed payload: Missing or invalid deviceId" };
     }
 
-    if (typeof sequence !== "number") {
-      return { vitals: null, error: "Malformed payload: Missing or invalid sequence" };
+    if (typeof sequence !== "number" || !Number.isInteger(sequence) || sequence < 0) {
+      return { vitals: null, error: "Malformed payload: Invalid sequence number" };
     }
 
-    if (typeof uptimeMs !== "number") {
-      return { vitals: null, error: "Malformed payload: Missing or invalid uptimeMs" };
+    if (typeof uptimeMs !== "number" || uptimeMs < 0) {
+      return { vitals: null, error: "Malformed payload: Invalid uptimeMs" };
     }
 
     if (source !== "simulated" && source !== "hardware") {
@@ -52,36 +58,86 @@ export class ScoringService {
       return { vitals: null, error: `Malformed payload: Invalid quality status '${quality}'` };
     }
 
-    // 2. Duplicate sequence number rejection
-    const lastSeq = this.lastSequenceMap.get(deviceId);
-    if (lastSeq !== undefined && sequence <= lastSeq && sequence !== 0) {
+    // 2. Telemetry Numeric Range Validation
+    let cleanHr: number | null = null;
+    if (hrBpm !== null && hrBpm !== undefined) {
+      if (typeof hrBpm !== "number" || isNaN(hrBpm) || hrBpm < 30 || hrBpm > 220) {
+        cleanHr = null; // Invalidate out-of-range HR reading
+      } else {
+        cleanHr = hrBpm;
+      }
+    }
+
+    let cleanRmssd: number | null = null;
+    if (pulseRmssdMs !== null && pulseRmssdMs !== undefined) {
+      if (typeof pulseRmssdMs !== "number" || isNaN(pulseRmssdMs) || pulseRmssdMs < 1 || pulseRmssdMs > 300) {
+        cleanRmssd = null; // Invalidate out-of-range RMSSD reading
+      } else {
+        cleanRmssd = pulseRmssdMs;
+      }
+    }
+
+    let cleanMotion: number | null = null;
+    if (motion !== null && motion !== undefined) {
+      if (typeof motion === "number" && !isNaN(motion)) {
+        cleanMotion = Math.min(1.0, Math.max(0.0, motion));
+      }
+    }
+
+    // 3. Reboot & Sequence Deduplication Policy
+    const storedState = this.deviceStateMap.get(deviceId);
+    let isReboot = false;
+
+    if (storedState) {
+      if (bootId && storedState.bootId && bootId !== storedState.bootId) {
+        isReboot = true;
+      } else if (sequence < storedState.sequence) {
+        isReboot = true; // Sequence number reset to 1
+      } else if (uptimeMs < storedState.uptimeMs) {
+        isReboot = true; // Device uptime reset to 0
+      }
+    }
+
+    if (!isReboot && storedState && sequence <= storedState.sequence && sequence !== 0) {
       return { vitals: null, error: `Duplicate or out-of-order sequence ${sequence} for device ${deviceId}` };
     }
-    this.lastSequenceMap.set(deviceId, sequence);
 
-    // Note: If device supplied focusScore, it is intentionally omitted / ignored here!
+    // Update stored state for reboot tracking
+    this.deviceStateMap.set(deviceId, {
+      sequence,
+      uptimeMs,
+      bootId: typeof bootId === "string" ? bootId : undefined,
+    });
+
+    if (isReboot) {
+      console.log(`[Device Reboot Detected] Reset sequence tracker for device '${deviceId}' (seq #${sequence}, uptime ${uptimeMs}ms)`);
+    }
+
+    // 4. Source Filter Gate
+    // If incoming source does not match activeSelectedSource, log payload but do not update live vitals
+    const receivedAt = new Date().toISOString();
+    const nowMs = Date.now();
+    this.lastUpdateTimestampBySource.set(source, nowMs);
+
     const cleanPayload: SensorPayload = {
       deviceId,
       sequence,
       uptimeMs,
+      bootId: typeof bootId === "string" ? bootId : undefined,
       source,
-      hrBpm: typeof hrBpm === "number" ? hrBpm : null,
-      pulseRmssdMs: typeof pulseRmssdMs === "number" ? pulseRmssdMs : null,
-      motion: typeof motion === "number" ? motion : null,
+      hrBpm: cleanHr,
+      pulseRmssdMs: cleanRmssd,
+      motion: cleanMotion,
       quality,
     };
 
-    const receivedAt = new Date().toISOString();
-    this.lastUpdateTimestamp = Date.now();
-
-    // 3. Compute score using single shared backend implementation
     const scoreResult = calculateFocusScore(
       cleanPayload.hrBpm,
       cleanPayload.pulseRmssdMs,
       cleanPayload.motion,
       cleanPayload.quality,
       currentSessionMinutes,
-      false // Not stale at ingestion moment
+      false
     );
 
     const processed: ProcessedVitals = {
@@ -93,46 +149,43 @@ export class ScoringService {
       reason: scoreResult.reason,
     };
 
-    this.latestVitals = processed;
+    this.latestVitalsBySource.set(source, processed);
 
     // Log to DB
     this.db.logVitals(processed).catch((err) => {
       console.error("Failed to log vitals to DB:", err);
     });
 
+    if (source !== activeSelectedSource) {
+      return {
+        vitals: null,
+        ignoredReason: `Payload source '${source}' ignored because active selected source is '${activeSelectedSource}'`,
+      };
+    }
+
     return { vitals: processed };
   }
 
   /**
-   * Checks if the latest vitals reading has gone stale (>15 seconds without update).
+   * Retrieves latest processed vitals for the currently selected source, checking 15s stale timeout.
    */
-  private checkStaleStatus(): void {
-    if (!this.latestVitals) return;
+  public getLatestVitals(selectedSource: SensorSource = "simulated"): ProcessedVitals | null {
+    const vitals = this.latestVitalsBySource.get(selectedSource);
+    if (!vitals) return null;
 
-    const elapsedMs = Date.now() - this.lastUpdateTimestamp;
-    if (elapsedMs > this.staleTimeoutMs && !this.latestVitals.isStale) {
-      this.latestVitals = {
-        ...this.latestVitals,
-        isStale: true,
-        score: null,
-        band: "UNAVAILABLE",
-        reason: "Sensor data stale (>15s without telemetry update)",
-      };
-    }
-  }
+    const lastTs = this.lastUpdateTimestampBySource.get(selectedSource) || 0;
+    const elapsedMs = Date.now() - lastTs;
 
-  public getLatestVitals(): ProcessedVitals | null {
-    if (!this.latestVitals) return null;
-    const elapsedMs = Date.now() - this.lastUpdateTimestamp;
     if (elapsedMs > this.staleTimeoutMs) {
       return {
-        ...this.latestVitals,
+        ...vitals,
         isStale: true,
         score: null,
         band: "UNAVAILABLE",
-        reason: "Sensor data stale (>15s without telemetry update)",
+        reason: `Sensor telemetry from source '${selectedSource}' is stale (>15s without update)`,
       };
     }
-    return this.latestVitals;
+
+    return vitals;
   }
 }

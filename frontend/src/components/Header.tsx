@@ -1,16 +1,38 @@
 import React from "react";
-import { ProcessedVitals } from "@biosync/shared";
-import { Activity, AlertTriangle, Cpu, Radio, ShieldAlert } from "lucide-react";
+import { ProcessedVitals, SensorSource } from "@biosync/shared";
+import { Activity, Cpu, Radio, ShieldAlert } from "lucide-react";
 
 interface HeaderProps {
   vitals: ProcessedVitals | null;
   isConnected: boolean;
+  selectedSource: SensorSource;
+  onSelectSource?: (source: SensorSource) => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ vitals, isConnected }) => {
-  const isSimulated = vitals ? vitals.source === "simulated" : true;
+export const Header: React.FC<HeaderProps> = ({
+  vitals,
+  isConnected,
+  selectedSource,
+  onSelectSource,
+}) => {
+  const isSimulated = selectedSource === "simulated";
   const isStale = vitals ? vitals.isStale : true;
   const quality = vitals?.quality || "no_contact";
+
+  const handleToggleSource = async (newSource: SensorSource) => {
+    if (onSelectSource) {
+      onSelectSource(newSource);
+    }
+    try {
+      await fetch("/api/session/source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: newSource }),
+      });
+    } catch (err) {
+      console.error("Failed to switch active source:", err);
+    }
+  };
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-30 shadow-lg">
@@ -33,18 +55,32 @@ export const Header: React.FC<HeaderProps> = ({ vitals, isConnected }) => {
           </div>
         </div>
 
-        {/* Badges Bar */}
+        {/* Badges & Source Selector */}
         <div className="flex items-center flex-wrap gap-2 text-xs">
-          {/* Prominent Source Badge */}
-          <div
-            className={`px-3 py-1.5 rounded-lg font-semibold flex items-center space-x-1.5 border shadow-sm ${
-              isSimulated
-                ? "bg-indigo-950/80 text-indigo-300 border-indigo-700/60"
-                : "bg-emerald-950/80 text-emerald-300 border-emerald-700/60"
-            }`}
-          >
-            <Cpu className="w-4 h-4" />
-            <span>SOURCE: {isSimulated ? "SIMULATED TELEMETRY" : "HARDWARE ESP32"}</span>
+          {/* Explicit Source Selector Button Group */}
+          <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
+            <button
+              onClick={() => handleToggleSource("simulated")}
+              className={`px-3 py-1 rounded-lg font-semibold flex items-center space-x-1 transition ${
+                isSimulated
+                  ? "bg-indigo-600 text-white shadow"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span>SIMULATED</span>
+            </button>
+            <button
+              onClick={() => handleToggleSource("hardware")}
+              className={`px-3 py-1 rounded-lg font-semibold flex items-center space-x-1 transition ${
+                !isSimulated
+                  ? "bg-emerald-600 text-white shadow"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span>HARDWARE</span>
+            </button>
           </div>
 
           {/* Quality Badge */}

@@ -28,7 +28,8 @@ export class SqliteDatabaseManager {
           isActive INTEGER NOT NULL,
           accumulatedMinutes REAL NOT NULL,
           lowScoreConsecutiveMs REAL NOT NULL,
-          activeScenario TEXT NOT NULL
+          activeScenario TEXT NOT NULL,
+          selectedSource TEXT NOT NULL DEFAULT 'simulated'
         )
       `);
             this.db.run(`
@@ -46,6 +47,12 @@ export class SqliteDatabaseManager {
           receivedAt TEXT NOT NULL
         )
       `);
+            // Migration: Add selectedSource column if missing from legacy table
+            this.db.run(`
+        ALTER TABLE session ADD COLUMN selectedSource TEXT NOT NULL DEFAULT 'simulated'
+      `, () => {
+                // Ignore error if column already exists
+            });
             // Seed initial demonstration tasks if table is empty
             this.db.get("SELECT COUNT(*) as count FROM tasks", (err, row) => {
                 if (!err && row && row.count === 0) {
@@ -62,7 +69,7 @@ export class SqliteDatabaseManager {
                 description: "Embedded C++ sensor processing & gravity removal algorithm",
                 difficulty: 5,
                 estimatedMinutes: 60,
-                deadline: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(), // Due in 2h (HARD)
+                deadline: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
                 status: "pending",
             },
             {
@@ -70,7 +77,7 @@ export class SqliteDatabaseManager {
                 description: "Verify pulse peak detection & rolling RMSSD algorithm",
                 difficulty: 4,
                 estimatedMinutes: 45,
-                deadline: new Date(now.getTime() + 5 * 60 * 60 * 1000).toISOString(), // Due in 5h (HARD)
+                deadline: new Date(now.getTime() + 5 * 60 * 60 * 1000).toISOString(),
                 status: "pending",
             },
             {
@@ -78,7 +85,7 @@ export class SqliteDatabaseManager {
                 description: "Check I2C pullup resistors and Mosquitto broker setup",
                 difficulty: 3,
                 estimatedMinutes: 30,
-                deadline: new Date(now.getTime() + 1 * 60 * 60 * 1000).toISOString(), // Due in 1h (MEDIUM)
+                deadline: new Date(now.getTime() + 1 * 60 * 60 * 1000).toISOString(),
                 status: "pending",
             },
             {
@@ -86,7 +93,7 @@ export class SqliteDatabaseManager {
                 description: "Draft discussion section on experimental HRV demo assumptions",
                 difficulty: 2,
                 estimatedMinutes: 20,
-                deadline: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(), // Due tomorrow (EASY)
+                deadline: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
                 status: "pending",
             },
             {
@@ -94,13 +101,13 @@ export class SqliteDatabaseManager {
                 description: "Routine lab maintenance before hardware testing",
                 difficulty: 1,
                 estimatedMinutes: 15,
-                deadline: new Date(now.getTime() + 12 * 60 * 60 * 1000).toISOString(), // Due in 12h (EASY)
+                deadline: new Date(now.getTime() + 12 * 60 * 60 * 1000).toISOString(),
                 status: "pending",
             },
         ];
         sampleTasks.forEach((t) => this.createTask(t));
     }
-    // --- ITaskRepository Implementation ---
+    // --- ITaskRepository ---
     getAllTasks() {
         return new Promise((resolve, reject) => {
             this.db.all("SELECT * FROM tasks ORDER BY createdAt DESC", (err, rows) => {
@@ -190,7 +197,7 @@ export class SqliteDatabaseManager {
             });
         });
     }
-    // --- ISessionRepository Implementation ---
+    // --- ISessionRepository ---
     getCurrentSession() {
         return new Promise((resolve, reject) => {
             this.db.get("SELECT * FROM session LIMIT 1", (err, row) => {
@@ -206,6 +213,7 @@ export class SqliteDatabaseManager {
                     accumulatedMinutes: row.accumulatedMinutes,
                     lowScoreConsecutiveMs: row.lowScoreConsecutiveMs,
                     activeScenario: row.activeScenario,
+                    selectedSource: row.selectedSource || "simulated",
                 });
             });
         });
@@ -213,15 +221,16 @@ export class SqliteDatabaseManager {
     saveCurrentSession(session) {
         return new Promise((resolve, reject) => {
             const sql = `
-        INSERT INTO session (id, startTime, endTime, isActive, accumulatedMinutes, lowScoreConsecutiveMs, activeScenario)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO session (id, startTime, endTime, isActive, accumulatedMinutes, lowScoreConsecutiveMs, activeScenario, selectedSource)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           startTime = excluded.startTime,
           endTime = excluded.endTime,
           isActive = excluded.isActive,
           accumulatedMinutes = excluded.accumulatedMinutes,
           lowScoreConsecutiveMs = excluded.lowScoreConsecutiveMs,
-          activeScenario = excluded.activeScenario
+          activeScenario = excluded.activeScenario,
+          selectedSource = excluded.selectedSource
       `;
             this.db.run(sql, [
                 session.id,
@@ -231,6 +240,7 @@ export class SqliteDatabaseManager {
                 session.accumulatedMinutes,
                 session.lowScoreConsecutiveMs,
                 session.activeScenario,
+                session.selectedSource || "simulated",
             ], (err) => {
                 if (err)
                     return reject(err);
@@ -238,7 +248,7 @@ export class SqliteDatabaseManager {
             });
         });
     }
-    // --- IVitalsRepository Implementation ---
+    // --- IVitalsRepository ---
     logVitals(vitals) {
         return new Promise((resolve, reject) => {
             const sql = `

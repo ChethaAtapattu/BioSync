@@ -36,6 +36,8 @@ export class MqttIngestionService {
           const rawString = message.toString();
           const rawPayload = JSON.parse(rawString);
 
+          // Note: ScoringService handles source selection gating, duplicate sequence detection,
+          // bootId reboot resets, and telemetry range validations.
           const result = this.scoringService.processSensorPayload(rawPayload);
           if (result.error) {
             console.warn(`[MQTT Reject] ${result.error}`);
@@ -49,7 +51,6 @@ export class MqttIngestionService {
 
       this.client.on("error", (err) => {
         this.isConnected = false;
-        // Suppress repeated connection logs if local Mosquitto is offline during simulation tests
         console.warn(`[MQTT Broker Warning] Cannot connect to ${this.brokerUrl} (${err.message}). System will continue with simulated telemetry.`);
       });
 

@@ -6,6 +6,7 @@ export interface SensorPayload {
   deviceId: string;
   sequence: number;
   uptimeMs: number;
+  bootId?: string; // Optional boot identifier for reboot detection
   source: SensorSource;
   hrBpm: number | null;
   pulseRmssdMs: number | null;
@@ -70,6 +71,7 @@ export interface StudySessionState {
   accumulatedMinutes: number;
   lowScoreConsecutiveMs: number;
   activeScenario: SimulationScenario;
+  selectedSource: SensorSource; // Explicit SIMULATED vs HARDWARE input selection
 }
 
 export type SimulationScenario =

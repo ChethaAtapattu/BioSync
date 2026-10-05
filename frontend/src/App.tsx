@@ -21,10 +21,16 @@ export const App: React.FC = () => {
     refreshTasks,
   } = useBioSyncSocket();
 
+  const selectedSource = session?.selectedSource || "simulated";
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-12">
-      {/* Sticky Header */}
-      <Header vitals={vitals} isConnected={isConnected} />
+      {/* Sticky Header with explicit source selection toggle */}
+      <Header
+        vitals={vitals}
+        isConnected={isConnected}
+        selectedSource={selectedSource}
+      />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
         {/* Top Control Grid: Vitals Gauge, Session Tracker, Task Recommendations */}

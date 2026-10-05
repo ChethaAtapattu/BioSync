@@ -30,7 +30,7 @@ const db = new SqliteDatabaseManager(process.env.DATABASE_FILE || "./biosync.db"
 const scoringService = new ScoringService(db);
 const simulatorService = new SimulatorService("SIM-ESP32-001");
 const claudeService = new ClaudeRecommendationService();
-// State
+// Session & Alert State
 let sessionState = {
     id: `session-${Date.now()}`,
     startTime: new Date().toISOString(),
@@ -38,29 +38,35 @@ let sessionState = {
     accumulatedMinutes: 0,
     lowScoreConsecutiveMs: 0,
     activeScenario: "rested",
+    selectedSource: "simulated",
 };
 let alertState = createInitialAlertState();
-// Load existing session state from DB if available
+// Restore persisted session from DB on startup
 db.getCurrentSession().then((saved) => {
     if (saved) {
         sessionState = saved;
+        console.log(`[Session Restored] Active: ${sessionState.isActive}, Mins: ${sessionState.accumulatedMinutes.toFixed(1)}, Source: ${sessionState.selectedSource}`);
     }
 });
 // Broadcast state updates over Socket.io
 function broadcastVitals(vitals) {
+    // Only the selected source may update live vitals, task rankings, and alerts!
+    if (vitals.source !== sessionState.selectedSource) {
+        return;
+    }
     io.emit("vitals:update", vitals);
-    // Run Alert Evaluation
+    // Evaluate alerts ONLY when session is active and telemetry is valid
     const isValid = !vitals.isStale && vitals.quality === "good" && vitals.score !== null;
     const evaluation = evaluateAlerts(alertState, {
         score: vitals.score,
         isValid,
         sessionIsActive: sessionState.isActive,
-        sessionStartTimeISO: sessionState.startTime,
+        accumulatedMinutes: sessionState.accumulatedMinutes,
         nowMs: Date.now(),
     });
     alertState = evaluation.nextState;
     sessionState.lowScoreConsecutiveMs = alertState.lowScoreConsecutiveMs;
-    // Save session state to DB periodically
+    // Persist current session deterministically
     db.saveCurrentSession(sessionState).catch(console.error);
     if (evaluation.newAlerts.length > 0) {
         evaluation.newAlerts.forEach((alert) => {
@@ -73,24 +79,36 @@ function broadcastVitals(vitals) {
 }
 async function broadcastTasks() {
     const tasks = await db.getAllTasks();
-    const latestVitals = scoringService.getLatestVitals();
+    const latestVitals = scoringService.getLatestVitals(sessionState.selectedSource);
     const band = latestVitals?.band || "UNAVAILABLE";
     const ranked = rankTasks(tasks, band);
-    io.emit("tasks:update", { tasks, ranked, band });
+    io.emit("tasks:update", { tasks, ranked, band, selectedSource: sessionState.selectedSource });
 }
 function broadcastSession() {
     io.emit("session:update", sessionState);
+    db.saveCurrentSession(sessionState).catch(console.error);
 }
-// 1. Session Duration Accumulator Tick (runs every 1 sec)
+// 1. Session Duration Accumulator & Stale Telemetry Checker Tick (every 1 second)
 setInterval(() => {
     if (sessionState.isActive) {
         sessionState.accumulatedMinutes += 1 / 60;
         broadcastSession();
     }
+    // Check stale status for selected source (15s timeout)
+    const latest = scoringService.getLatestVitals(sessionState.selectedSource);
+    if (latest && latest.isStale) {
+        // Stale status: clear score, interrupt low-score timer, rerank tasks by deadline
+        if (alertState.lowScoreConsecutiveMs !== 0) {
+            alertState.lowScoreConsecutiveMs = 0;
+            sessionState.lowScoreConsecutiveMs = 0;
+        }
+        io.emit("vitals:update", latest);
+        broadcastTasks();
+    }
 }, 1000);
-// 2. Start Simulator Stream (runs through exact same processSensorPayload pipeline)
+// 2. Start Simulator Stream
 simulatorService.start(2000, (payload) => {
-    const result = scoringService.processSensorPayload(payload, sessionState.accumulatedMinutes);
+    const result = scoringService.processSensorPayload(payload, sessionState.accumulatedMinutes, sessionState.selectedSource);
     if (result.vitals) {
         broadcastVitals(result.vitals);
     }
@@ -101,10 +119,20 @@ const mqttService = new MqttIngestionService(process.env.MQTT_BROKER_URL || "mqt
 });
 mqttService.connect();
 // 4. API Routes
-app.use("/api/tasks", createTasksRouter(db, scoringService, broadcastTasks));
+app.use("/api/tasks", createTasksRouter(db, scoringService, () => sessionState.selectedSource, broadcastTasks));
 app.use("/api/session", createSessionsRouter(db, () => sessionState, (updater) => {
     sessionState = updater(sessionState);
+    // If session is paused, interrupt and reset low-score timer immediately!
+    if (!sessionState.isActive) {
+        alertState.lowScoreConsecutiveMs = 0;
+        sessionState.lowScoreConsecutiveMs = 0;
+    }
     broadcastSession();
+}, () => {
+    // Reset backend alert state deterministically on session reset
+    alertState = createInitialAlertState();
+    sessionState.lowScoreConsecutiveMs = 0;
+    io.emit("alerts:list", alertState.alerts);
 }, broadcastSession));
 app.use("/api/simulator", createSimulatorRouter(simulatorService, (scenario) => {
     sessionState.activeScenario = scenario;
@@ -132,20 +160,27 @@ app.get("/api/health", (req, res) => {
 // 5. Socket.io Event Handling
 io.on("connection", async (socket) => {
     console.log(`Socket client connected: ${socket.id}`);
-    // Send initial data snapshot to newly connected client
-    const latestVitals = scoringService.getLatestVitals();
+    const latestVitals = scoringService.getLatestVitals(sessionState.selectedSource);
     if (latestVitals) {
         socket.emit("vitals:update", latestVitals);
     }
     const tasks = await db.getAllTasks();
     const band = latestVitals?.band || "UNAVAILABLE";
     const ranked = rankTasks(tasks, band);
-    socket.emit("tasks:update", { tasks, ranked, band });
+    socket.emit("tasks:update", { tasks, ranked, band, selectedSource: sessionState.selectedSource });
     socket.emit("session:update", sessionState);
     socket.emit("alerts:list", alertState.alerts);
     socket.on("alert:acknowledge", (alertId) => {
         alertState.alerts = alertState.alerts.map((a) => a.id === alertId ? { ...a, acknowledged: true, acknowledgedAt: new Date().toISOString() } : a);
         io.emit("alerts:list", alertState.alerts);
+    });
+    socket.on("session:select_source", (source) => {
+        if (source === "simulated" || source === "hardware") {
+            sessionState.selectedSource = source;
+            console.log(`[Source Selection Changed] Active input telemetry source set to '${source}'`);
+            broadcastSession();
+            broadcastTasks();
+        }
     });
     socket.on("disconnect", () => {
         console.log(`Socket client disconnected: ${socket.id}`);
@@ -156,6 +191,6 @@ server.listen(PORT, () => {
     console.log(`BioSync Backend Server running on http://localhost:${PORT}`);
     console.log(`Socket.io ready on ws://localhost:${PORT}`);
     console.log(`MQTT Ingestion Broker: ${process.env.MQTT_BROKER_URL || "mqtt://localhost:1883"}`);
-    console.log(`Default Simulator active in scenario: '${simulatorService.getScenario()}'`);
+    console.log(`Active Telemetry Source: '${sessionState.selectedSource}'`);
     console.log(`=======================================================`);
 });
