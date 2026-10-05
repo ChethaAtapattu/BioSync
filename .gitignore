@@ -1,1 +1,20 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Operating system junk
+.DS_Store
+*.DS_Store
+._*
+
+# Local Database & Storage
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment variables
+.env
+.env.local
