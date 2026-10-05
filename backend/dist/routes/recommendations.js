@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { rankTasks } from "@biosync/shared";
-export function createRecommendationsRouter(db, scoringService, claudeService, getSessionMinutes) {
+export function createRecommendationsRouter(db, scoringService, claudeService, getSelectedSource, getSessionMinutes) {
     const router = Router();
     // GET /api/recommendations
     router.get("/", async (req, res) => {
         try {
             const tasks = await db.getAllTasks();
-            const latestVitals = scoringService.getLatestVitals();
+            const selectedSource = getSelectedSource();
+            const latestVitals = scoringService.getLatestVitals(selectedSource);
             const band = latestVitals?.band || "UNAVAILABLE";
             const score = latestVitals?.score ?? null;
             const sessionMins = getSessionMinutes();

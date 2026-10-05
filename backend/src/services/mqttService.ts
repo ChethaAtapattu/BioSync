@@ -1,4 +1,5 @@
 import mqtt, { MqttClient } from "mqtt";
+import { SensorSource } from "@biosync/shared";
 import { ScoringService } from "./scoringService.js";
 
 export class MqttIngestionService {
@@ -9,6 +10,8 @@ export class MqttIngestionService {
     private brokerUrl: string = process.env.MQTT_BROKER_URL || "mqtt://localhost:1883",
     private topicPrefix: string = process.env.MQTT_TOPIC_PREFIX || "biosync",
     private scoringService: ScoringService,
+    private getSelectedSource: () => SensorSource,
+    private getAccumulatedMinutes: () => number,
     private onVitalsProcessed?: (vitals: any) => void
   ) {}
 
@@ -36,9 +39,16 @@ export class MqttIngestionService {
           const rawString = message.toString();
           const rawPayload = JSON.parse(rawString);
 
-          // Note: ScoringService handles source selection gating, duplicate sequence detection,
-          // bootId reboot resets, and telemetry range validations.
-          const result = this.scoringService.processSensorPayload(rawPayload);
+          const activeSource = this.getSelectedSource();
+          const accumulatedMins = this.getAccumulatedMinutes();
+
+          // Pass current selectedSource and accumulatedMinutes into processSensorPayload
+          const result = this.scoringService.processSensorPayload(
+            rawPayload,
+            accumulatedMins,
+            activeSource
+          );
+
           if (result.error) {
             console.warn(`[MQTT Reject] ${result.error}`);
           } else if (result.vitals && this.onVitalsProcessed) {

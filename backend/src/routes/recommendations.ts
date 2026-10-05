@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { rankTasks } from "@biosync/shared";
+import { rankTasks, SensorSource } from "@biosync/shared";
 import { SqliteDatabaseManager } from "../database/sqliteRepository.js";
 import { ScoringService } from "../services/scoringService.js";
 import { ClaudeRecommendationService } from "../services/claudeService.js";
@@ -8,6 +8,7 @@ export function createRecommendationsRouter(
   db: SqliteDatabaseManager,
   scoringService: ScoringService,
   claudeService: ClaudeRecommendationService,
+  getSelectedSource: () => SensorSource,
   getSessionMinutes: () => number
 ): Router {
   const router = Router();
@@ -16,7 +17,8 @@ export function createRecommendationsRouter(
   router.get("/", async (req, res) => {
     try {
       const tasks = await db.getAllTasks();
-      const latestVitals = scoringService.getLatestVitals();
+      const selectedSource = getSelectedSource();
+      const latestVitals = scoringService.getLatestVitals(selectedSource);
       const band = latestVitals?.band || "UNAVAILABLE";
       const score = latestVitals?.score ?? null;
       const sessionMins = getSessionMinutes();

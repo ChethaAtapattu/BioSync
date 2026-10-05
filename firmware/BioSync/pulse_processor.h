@@ -24,7 +24,8 @@ struct RRSample {
 
 class PulseProcessor {
 private:
-    static const size_t MAX_RR_SAMPLES = 60; // Up to 60 samples in 60-second window
+    // Buffer sized to cover 60 seconds at maximum heart rate (220+ BPM -> 220 beats + safety margin = 240 samples)
+    static const size_t MAX_RR_SAMPLES = 240;
     RRSample rrBuffer[MAX_RR_SAMPLES];
     size_t rrHead;
     size_t rrCount;

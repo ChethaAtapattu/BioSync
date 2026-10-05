@@ -31,7 +31,13 @@ MotionProcessor motionProc;
 uint32_t sequenceNumber = 1;
 uint32_t lastPublishMs = 0;
 uint32_t lastSampleMs = 0;
-const char* bootId = "BOOT-ESP32-1001"; // Boot identifier for reboot tracking
+char bootId[32]; // Unique per-boot identifier for reboot tracking
+
+void generateBootId() {
+    uint32_t r1 = esp_random();
+    uint32_t r2 = esp_random();
+    snprintf(bootId, sizeof(bootId), "BOOT-%08X-%08X", r1, r2);
+}
 
 void setupWiFi() {
     delay(10);
@@ -112,8 +118,12 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000);
 
+    generateBootId();
+
     Serial.println("\n=============================================");
     Serial.println("BioSync Hardware Firmware — Arduino IDE Sketch");
+    Serial.print("Boot ID: ");
+    Serial.println(bootId);
     Serial.println("Target: ESP32-WROOM-32 (MAX30102 + MPU6050)");
     Serial.println("=============================================");
 
@@ -126,8 +136,8 @@ void setup() {
         Serial.println("[OK] MAX30102 initialized successfully!");
         byte powerLevel = 0x1F;       // 6.4mA LED current
         byte sampleAverage = SAMPLEAVG_4; // 4x sample averaging
-        byte ledMode = MODE_MULTILED;  // Red + IR mode
-        int sampleRate = SAMPLERATE_100; // 100 Hz effective sample rate
+        byte ledMode = MODE_MULTILED;  // Red + IR mode (MODE_MULTILED)
+        int sampleRate = SAMPLERATE_100; // 100 Hz effective sample rate per channel
         int pulseWidth = PULSEWIDTH_411; // 411us pulse width
         int adcRange = ADCRANGE_4096;   // 15-bit ADC range
 
@@ -153,7 +163,7 @@ void setup() {
 void loop() {
     uint32_t nowMs = millis();
 
-    // 1. Non-blocking continuous 100Hz I2C sampling via MAX3010x FIFO check
+    // 1. Non-blocking continuous I2C sampling via MAX3010x FIFO check
     if (nowMs - lastSampleMs >= 10) {
         lastSampleMs = nowMs;
 
@@ -172,7 +182,7 @@ void loop() {
         }
     }
 
-    // 2. Non-blocking WiFi & MQTT Reconnect Logic (Never blocks continuous 100Hz I2C loop)
+    // 2. Non-blocking WiFi & MQTT Reconnect Logic (Never blocks 100Hz sampling)
     if (WiFi.status() == WL_CONNECTED) {
         if (!mqttClient.connected()) {
             static uint32_t lastMqttReconnect = 0;

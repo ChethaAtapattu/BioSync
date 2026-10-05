@@ -1,5 +1,5 @@
 import { Router } from "express";
-export function createSessionsRouter(db, getSessionState, updateSessionState, onResetAlertState, onSessionChanged) {
+export function createSessionsRouter(db, getSessionState, updateSessionState, onResetAlertState, onSourceChanged, onSessionChanged) {
     const router = Router();
     // GET /api/session
     router.get("/", (req, res) => {
@@ -53,8 +53,8 @@ export function createSessionsRouter(db, getSessionState, updateSessionState, on
             ...prev,
             selectedSource: source,
         }));
-        if (onSessionChanged)
-            onSessionChanged();
+        // Trigger source change handling (resets low-score timer, broadcasts vitals & reranks tasks immediately)
+        onSourceChanged(source);
         res.json(getSessionState());
     });
     return router;

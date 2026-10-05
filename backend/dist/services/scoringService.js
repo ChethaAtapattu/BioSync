@@ -10,8 +10,9 @@ export class ScoringService {
     }
     /**
      * Processes an incoming raw sensor payload.
-     * Enforces numeric range validations, reboot detection, source selection filtering,
-     * deduplication, backend ISO timestamping, and Focus Score calculation.
+     * Enforces numeric range validations, unique bootId reboot detection,
+     * duplicate and out-of-order sequence rejection within the same boot,
+     * source selection filtering, backend ISO timestamping, and Focus Score calculation.
      */
     processSensorPayload(rawPayload, currentSessionMinutes = 0, activeSelectedSource = "simulated") {
         // 1. Schema & Structure Validation
@@ -60,34 +61,36 @@ export class ScoringService {
                 cleanMotion = Math.min(1.0, Math.max(0.0, motion));
             }
         }
-        // 3. Reboot & Sequence Deduplication Policy
+        // 3. Unique BootId & Sequence Deduplication Policy
         const storedState = this.deviceStateMap.get(deviceId);
-        let isReboot = false;
+        let isNewBoot = false;
         if (storedState) {
             if (bootId && storedState.bootId && bootId !== storedState.bootId) {
-                isReboot = true;
+                isNewBoot = true; // New bootId generated on device reboot
             }
-            else if (sequence < storedState.sequence) {
-                isReboot = true; // Sequence number reset to 1
-            }
-            else if (uptimeMs < storedState.uptimeMs) {
-                isReboot = true; // Device uptime reset to 0
+            else if (!bootId && (sequence < storedState.sequence || uptimeMs < storedState.uptimeMs)) {
+                isNewBoot = true; // Reboot detected by sequence/uptime reset
             }
         }
-        if (!isReboot && storedState && sequence <= storedState.sequence && sequence !== 0) {
-            return { vitals: null, error: `Duplicate or out-of-order sequence ${sequence} for device ${deviceId}` };
+        else {
+            isNewBoot = true;
         }
-        // Update stored state for reboot tracking
+        if (!isNewBoot && storedState) {
+            // Within the same boot: reject duplicate or out-of-order packets!
+            if (sequence <= storedState.sequence) {
+                return { vitals: null, error: `Duplicate or out-of-order sequence ${sequence} for device ${deviceId} within boot '${bootId || "default"}'` };
+            }
+        }
+        // Update stored state for reboot & sequence tracking
         this.deviceStateMap.set(deviceId, {
             sequence,
             uptimeMs,
             bootId: typeof bootId === "string" ? bootId : undefined,
         });
-        if (isReboot) {
-            console.log(`[Device Reboot Detected] Reset sequence tracker for device '${deviceId}' (seq #${sequence}, uptime ${uptimeMs}ms)`);
+        if (isNewBoot && storedState) {
+            console.log(`[Device Reboot Detected] Device '${deviceId}' registered new bootId '${bootId}' (seq reset to #${sequence})`);
         }
         // 4. Source Filter Gate
-        // If incoming source does not match activeSelectedSource, log payload but do not update live vitals
         const receivedAt = new Date().toISOString();
         const nowMs = Date.now();
         this.lastUpdateTimestampBySource.set(source, nowMs);

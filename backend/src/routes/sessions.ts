@@ -7,6 +7,7 @@ export function createSessionsRouter(
   getSessionState: () => StudySessionState,
   updateSessionState: (updater: (prev: StudySessionState) => StudySessionState) => void,
   onResetAlertState: () => void,
+  onSourceChanged: (source: SensorSource) => void,
   onSessionChanged?: () => void
 ): Router {
   const router = Router();
@@ -66,7 +67,9 @@ export function createSessionsRouter(
       selectedSource: source as SensorSource,
     }));
 
-    if (onSessionChanged) onSessionChanged();
+    // Trigger source change handling (resets low-score timer, broadcasts vitals & reranks tasks immediately)
+    onSourceChanged(source as SensorSource);
+
     res.json(getSessionState());
   });
 
