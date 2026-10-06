@@ -1,114 +1,217 @@
-# BioSync Planner — Complete System Setup & Startup Guide
+# BioSync Planner — Tester Setup and Demonstration Guide
 
-This document outlines environment requirements, installation steps, and commands to run the full BioSync Planner stack.
+This guide runs the physical ESP32 prototype with a local MQTT broker and dashboard. Allow time for first-time software installation. For a prepared demonstration, start at section 2.
 
----
+## 1. What the tester needs
 
-## 1. Architecture & Execution Strategy
+- The assembled ESP32-WROOM-32, MAX30102 and MPU6050 prototype with soldered headers.
+- A working USB data cable; a USB-C to USB-A data adapter if required.
+- A computer with Node.js/npm and Mosquitto. The Mac instructions below use Homebrew.
+- A normal 2.4 GHz Wi-Fi network shared by the computer and ESP32. Guest networks, captive-portal university Wi-Fi and networks with client isolation may prevent communication.
+- The BioSync repository. Arduino IDE is needed only to install or change firmware, not for normal evaluator setup.
 
-- **React Frontend**: Independent application in `/frontend` (`http://localhost:3000`).
-- **Node.js Backend**: Independent application in `/backend` (`http://localhost:3001`).
-- **ESP32 Firmware**: Arduino IDE sketch located at `firmware/BioSync/BioSync.ino`.
-- **Implementation Strategy**:
-  1. **Build & Verify Simulated Dashboard First**: Run backend + frontend with the built-in simulator engine (`rested`, `elevated_pulse`, `prolonged_session`, `motion_artifact`, `no_finger_contact`, `disconnected`).
-  2. **Connect Physical Hardware**: Configure local Mosquitto MQTT broker (see `docs/MOSQUITTO_SETUP.md`), flash ESP32 via Arduino IDE, and stream hardware telemetry over MQTT to the backend.
+The prototype uses finger contact. It is not a completed wrist-worn device. Its score is an experimental heuristic, not a validated measurement of concentration or a medical result.
 
----
+### Wiring reference
 
-## 2. Environment Configuration
+Disconnect USB before changing wires. Both sensors share the bus in parallel; the MPU does not relay MAX30102 data.
 
-Copy `backend/.env.example` to `backend/.env`:
+| ESP32 | MPU6050 | MAX30102 MH-ET LIVE breakout |
+|---|---|---|
+| 3V3 | VCC | VIN |
+| GND | GND | GND beside SCL |
+| GPIO21 / D21 | SDA | SDA |
+| GPIO22 / D22 | SCL | SCL |
+
+Leave the unused sensor pins disconnected. Do not use MPU XDA/XCL. Breadboard connections must occupy the same numbered row on the same side of the centre gap. Confirm the MAX breakout supply and 3V3/1V8 selector configuration; do not bridge selector pads or substitute 5 V by guessing.
+
+## 2. Start the MQTT broker
+
+On macOS, install once:
 
 ```bash
-cp backend/.env.example backend/.env
+brew install mosquitto
 ```
 
-Environment variables supported in `backend/.env`:
-- `PORT`: Node server port (Default: `3001`).
-- `MQTT_BROKER_URL`: Broker URL (Default: `mqtt://localhost:1883`).
-- `ANTHROPIC_API_KEY`: *(Optional)* Anthropic key for AI schedule explanations.
-- `ANTHROPIC_MODEL`: Anthropic model (Default: `claude-3-5-sonnet-20241022`).
-- `CLAUDE_TIMEOUT_MS`: API timeout in ms (Default: `5000`).
+If Homebrew is unavailable, install it from https://brew.sh first. Windows/Linux users can install Mosquitto from https://mosquitto.org/download/ and use the same broker configuration below.
 
----
-
-## 3. Quick Start Commands (Web Application)
-
-From the root project directory:
+Create a dedicated local demonstration configuration:
 
 ```bash
-# 1. Install all monorepo dependencies
+cat > ~/biosync-mosquitto.conf <<'CONF'
+listener 1883
+allow_anonymous true
+CONF
+```
+
+Run in Terminal A on an Apple Silicon Mac:
+
+```bash
+/opt/homebrew/opt/mosquitto/sbin/mosquitto -c ~/biosync-mosquitto.conf -v
+```
+
+On other installations, use the installed executable, for example:
+
+```bash
+mosquitto -c /path/to/biosync-mosquitto.conf -v
+```
+
+Leave this terminal open. The broker keeps running; scrolling messages do not mean installation is unfinished. Do not also start a second broker on port 1883. If it reports “Address already in use”, identify the existing broker before starting another.
+
+This demonstration configuration permits unauthenticated MQTT clients on reachable interfaces. Use it only on a trusted local demonstration network, do not expose/forward port 1883 to the internet, and stop it when finished. An authenticated deployment needs matching credential support in the device and backend.
+
+## 3. Start the web application
+
+In Terminal B, change to the repository root (the folder containing the root package.json):
+
+```bash
+cd /path/to/BioSync
 npm install
-
-# 2. Build shared TypeScript package
 npm run build:shared
-
-# 3. Start backend server and frontend development server concurrently
 npm start
 ```
 
-- **Frontend Dashboard**: `http://localhost:3000`
-- **Backend API & Socket.io Server**: `http://localhost:3001`
+The configured addresses are:
 
----
+| Service | Address |
+|---|---|
+| Dashboard | http://localhost:3000 |
+| Backend / Socket.io | http://localhost:3001 |
+| Backend MQTT connection | mqtt://localhost:1883 |
 
-## 4. Running Automated Verification Tests
+Use the frontend URL printed by Vite if port 3000 is occupied. Keep this terminal open too.
 
-To execute the automated unit & integration test suite (28/28 tests passing):
+The default backend settings work when Mosquitto runs on the same computer. For custom settings, copy backend/.env.example to backend/.env if that file does not already exist, and set MQTT_BROKER_URL=mqtt://localhost:1883. The standard npm start command launches the backend through its package script, which runs in the backend directory. Check any existing environment configuration for broker URL overrides. SQLite is the MVP database; MongoDB and an Anthropic API key are not required for this demonstration.
+
+## 4. Configure the ESP32 without editing code
+
+### Find the computer's address
+
+On macOS, open System Settings → Wi-Fi → Details → TCP/IP and note the computer's IPv4 address. The computer must be on the same network as the ESP32.
+
+Enter the **computer's address** as the MQTT host, not the ESP32's address, router address, localhost or the example 192.168.1.100. The demonstrated computer address was 192.168.8.116; this is an example only and may change.
+
+### First-time setup or a different evaluator network
+
+1. Power the already-programmed ESP32 through USB.
+2. On first boot without stored settings, its setup Wi-Fi should appear automatically.
+3. To reopen setup on a configured device, hold **BOOT for three seconds while the firmware is already running**, then release. This clears saved Wi-Fi and MQTT settings. Do not hold BOOT while resetting/powering on: the classic ESP32 may enter flashing mode.
+4. Connect a phone or laptop to **BioSync-Setup**. The repository's default setup password is **biosyncsetup**; use the project's changed password if one was set.
+5. Stay connected despite “No internet”. Open **http://192.168.4.1** explicitly using HTTP.
+6. Enter the actual 2.4 GHz Wi-Fi name (SSID), Wi-Fi password, computer's MQTT host address and port **1883**.
+7. Click **Save & Connect**. A connection-reset page can occur because saving immediately reconnects Wi-Fi. Check serial status or reopen the portal to verify the saved result rather than assuming failure.
+8. Reconnect the laptop to the normal Wi-Fi network.
+
+The ESP32 saves settings across power cycles. On the same network, the evaluator normally only needs to power it and start the broker/application.
+
+### Access after Wi-Fi connection
+
+The ESP32 prints its current address in Serial Monitor:
+
+```text
+[WiFi] ESP32 Local IP Address: <device-IP>
+```
+
+Open **http://<device-IP>** from the same network to edit settings. The demonstrated address was 192.168.8.144; do not assume it stays fixed. The address 192.168.4.1 is for setup access-point mode.
+
+When changing only the MQTT host, leave the Wi-Fi password field blank to retain the stored password. Never include passwords in screenshots or the submitted report. The portal uses HTTP; the setup AP has password protection but the shared default password is not a production security design.
+
+## 5. Verify communication and sensor detection
+
+Arduino Serial Monitor is optional for normal use, but useful for verification. Select the actual /dev/cu.usbserial… port (Mac) or COM port (Windows), and set **115200 baud**. debug-console and Bluetooth ports are not the ESP32 USB connection.
+
+Look for:
+
+```text
+[OK] MAX30102 initialized successfully!
+[OK] MPU6050 initialized successfully!
+[WiFi] Connected successfully!
+[MQTT] Connecting to broker <computer-IP>:1883... CONNECTED!
+[MQTT PUBLISH SUCCESS] ...
+```
+
+The demonstration firmware was also given a temporary repeating diagnostic:
+
+```text
+[I2C CHECK] 0x57: DETECTED
+[I2C CHECK] 0x68: DETECTED
+```
+
+These lines appear only if that diagnostic is included in the uploaded firmware. Address 0x57 is MAX30102; 0x68 is MPU6050. Detection confirms an I²C response, not measurement accuracy.
+
+In the broker terminal, “Received PUBLISH from ESP32-HW-001” confirms receipt. “Sending PUBLISH” shows forwarding to a subscribed client. Keep the broker running and select **Hardware** in the dashboard. A live stream containing null values is communication success, not a successful pulse measurement.
+
+## 6. Perform the physical demonstration
+
+1. Put the sensor boards on a stable, nonconductive surface.
+2. Select **Hardware** in the dashboard. Create tasks of different difficulties/deadlines if required; start a study session to demonstrate session timing.
+3. Gently cover the MAX30102 optical window with the soft pad of an index fingertip. Do not use the MPU6050 as the contact sensor.
+4. Rest the hand and keep contact steady without pressing hard for **60–90 seconds**. Firmware publishes summaries about every five seconds.
+5. Verify that hrBpm and pulseRmssdMs become numeric and quality becomes good before interpreting the calculated score.
+6. Save a dashboard screenshot and one actual MQTT payload. Do not substitute the simulator's readings for hardware evidence.
+
+The system may withhold both pulse fields until its quality criteria are satisfied. Waiting longer is not a remedy for a sensor that is not detected or does not produce samples.
+
+### Test record
+
+Record observed outcomes; the following are expected behaviours, not prefilled successful results.
+
+| Test | Physical action | Expected observation | Evidence to record |
+|---|---|---|---|
+| Detection | Power the wired prototype | Both sensors initialize/respond | Startup log or I²C diagnostic |
+| Stable contact | Keep fingertip still for 60–90 seconds | Numeric pulse fields with good quality if signal criteria are met | Payload and dashboard screenshot |
+| No contact | Remove finger and wait for updates | No-contact/invalid status; score unavailable | Payload after removal |
+| Movement | Gently move MPU with steady finger contact; avoid pulling wires | Motion changes; sufficiently high motion gates score | Motion/quality payload |
+| Stale data | Disconnect ESP32 power, leaving broker/app running | Hardware status becomes stale after approximately 15 seconds | Timestamped screenshot |
+| Recovery | Restore power and finger contact | New boot ID, telemetry resumes and metrics warm up again | Recovery payload |
+| Persistence | Power cycle on the same network | Stored settings reconnect without re-entering credentials | Wi-Fi/MQTT connection log |
+| Task planning | Add tasks with distinct deadlines/difficulties | Ranking reflects valid context and deadline urgency | Task-list screenshot |
+
+If the score is unavailable but the explanation still quotes an old numerical score, refresh recommendations and record the inconsistency if it persists. Do not report the old explanation as a current sensor measurement.
+
+## 7. Troubleshooting
+
+| Symptom | Next action |
+|---|---|
+| USB power LED on, no upload port | Check a known working data cable/adapter; power alone does not confirm data. Close competing serial tools. |
+| Port disappears or “Device not configured” | Reseat or replace cable/adapter. With power disconnected, isolate the ESP32 from sensor wiring and retry. BOOT does not restore USB enumeration. |
+| Upload stalls at “Connecting…” with a valid stable port | Hold BOOT until writing starts, then release. |
+| Repeated reboot / xQueueSemaphoreTake assertion | Check that WebPortalManager::begin() calls server.begin() **after** startAPMode()/connectWiFi(). The demonstrated firmware required this startup-order correction. |
+| Setup page will not load | In AP mode join BioSync-Setup first; in station mode use the current ESP32 IP. Use HTTP, and stay connected despite the no-internet warning. |
+| Save page connection reset | Wait, reopen the root page without /save, and verify the stored host/current IP. |
+| MQTT rc=-2 | Confirm the computer's actual IP, broker running on 1883 with a network listener, same network and firewall access. Do not disable the entire firewall. |
+| 0x57 NOT DETECTED | Unplug power. Check MAX VIN/GND/SDA/SCL, breadboard continuity, jumpers and solder joints. Isolate MAX directly on the ESP32. Confirm the module selector before changing it. |
+| 0x68 NOT DETECTED | Check MPU VCC/GND/SDA/SCL; an intentionally disconnected MPU is expected to be absent. |
+| Detection alternates | Inspect/rework intermittent solder joints or replace jumpers with power off. Detection alone does not establish a short circuit. |
+| warming_up indefinitely | Verify initialization and fresh samples first; confirm contact and inspect serial quality. MQTT success alone does not prove acquisition. |
+| Dashboard does not reflect hardware | Select Hardware; check backend broker connection, topic and frontend connection. Confirm the payload source is hardware. |
+
+During development, unstable USB communication, a portal startup crash, broker configuration and MAX header solder connections were investigated. Both I²C addresses were subsequently reported detected and the student reported a successful live demonstration. Include the actual captured measurements when presenting evaluation evidence; this guide does not independently certify accuracy.
+
+## 8. Optional firmware installation and developer checks
+
+Skip upload if the prototype already has the working firmware. Uploading is needed only after source changes or for a replacement board.
+
+1. Install the ESP32 board package by Espressif Systems in Arduino IDE; select **ESP32 Dev Module**.
+2. Install PubSubClient, ArduinoJson **6.x**, SparkFun MAX3010x Sensor Library, Adafruit MPU6050 and Adafruit Unified Sensor. Accept required Adafruit dependencies, including BusIO.
+3. Open **firmware/BioSync/BioSync.ino** with all sibling files together, including web_portal.cpp/.h, config.h and both processor implementations.
+4. Before uploading, confirm the web-server startup-order correction described above is present. The successful device had a local correction; do not overwrite it with an uncorrected repository copy.
+5. Select the detected USB port, upload and confirm verification succeeds. Wi-Fi credentials are entered in the portal, not hardcoded.
+6. Set Serial Monitor to 115200 baud. EN resets the program; BOOT has different setup/flashing roles. If pressing EN disrupts USB, capture startup after reconnecting instead.
+
+The firmware's Wi-Fi setup and synchronous MQTT connection calls can interrupt acquisition. Comments describing all acquisition as nonblocking do not establish timing guarantees.
+
+Software-only checks from the repository root:
 
 ```bash
 npm test
+npm run build
 ```
 
----
+Record actual results. Automated software tests do not replace sensor, network or physical acceptance tests. Simulated mode can demonstrate application behaviour when hardware is unavailable, but must be labelled simulated.
 
-## 5. ESP32 Firmware Setup via Arduino IDE
+## 9. Finish the demonstration
 
-### A. Arduino IDE Board Package Installation
-1. Open **Arduino IDE** (v2.0+ recommended).
-2. Go to **File -> Preferences** (or **Arduino IDE -> Settings** on macOS).
-3. In **Additional Boards Manager URLs**, add:
-   `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
-4. Open **Tools -> Board -> Boards Manager...**, search for **esp32** by Espressif Systems, and click **Install**.
-5. Select Board: **Tools -> Board -> esp32 -> ESP32 Dev Module**.
+Save evidence first. Stop the application with Control+C in Terminal B and the broker with Control+C in Terminal A. Unplug ESP32 power before packing or rewiring. Keep stored Wi-Fi credentials private; clear them through the portal if the device is being handed to a different person.
 
-### B. Required Arduino IDE Libraries
-Open **Tools -> Manage Libraries...** (Ctrl+Shift+I / Cmd+Shift+I) and install:
-1. **PubSubClient** by Nick O'Leary (`mqttClient.setBufferSize(512)`)
-2. **ArduinoJson** by Benoit Blanchon (v6.21.4)
-3. **SparkFun MAX3010x Pulse and Proximity Sensor Library** (`setup(0x1F, 1, 2, 100, 411, 4096)`)
-4. **Adafruit MPU6050** by Adafruit
-5. **Adafruit Unified Sensor** by Adafruit
-
-### C. Local Mosquitto Broker Configuration
-For detailed local broker setup, listener configuration (`listener 1883 0.0.0.0`), finding laptop LAN IP, firewall rules, and CLI testing, consult:
-👉 [`docs/MOSQUITTO_SETUP.md`](file:///Users/chethaatapattu/BioSync/docs/MOSQUITTO_SETUP.md)
-
-### D. ESP32 Web Setup Portal Procedure (No Hardcoded Credentials)
-1. Open the sketch: **File -> Open...** -> select `firmware/BioSync/BioSync.ino`.
-2. Connect your **ESP32-WROOM-32** board via USB data cable.
-3. Select Port: **Tools -> Port -> /dev/cu.usbserial-...** (or COM port on Windows) and click **Upload**.
-4. On first boot (or if credentials are erased), the ESP32 creates an Access Point:
-   - **Wi-Fi AP Name**: `BioSync-Setup`
-   - **WPA2 Password**: `biosyncsetup`
-5. Connect your laptop or phone to `BioSync-Setup` Wi-Fi, open browser to **`http://192.168.4.1`**, enter your Wi-Fi SSID, Password, local Mosquitto Broker IP (e.g. `192.168.1.100`), and Port (`1883`), and click **Save & Connect**.
-6. Stored credentials persist securely in ESP32 Preferences NVS across reboots. Connection status is shown on the setup page without revealing stored passwords.
-
-### E. Reopening Configuration & Serial Monitor Debugging
-- **Reopen Portal via BOOT Button**: Hold the **BOOT button (GPIO 0)** on the ESP32 for 3 seconds (or hold during boot) to clear settings and start `BioSync-Setup` AP mode.
-- **Reopen Portal via Serial Monitor**: Open **Tools -> Serial Monitor** at **115200 baud**, and type **`C`** (or `config`/`reset`).
-- **Serial Diagnostics Output**:
-   ```text
-   ==================================================
-   BioSync Hardware Firmware — ESP32-WROOM-32
-   Boot ID: BOOT-4A2B1C3D-8F7E6D5C
-   Web Setup Portal & NVS Preferences Enabled
-   Press BOOT button (GPIO 0) or send 'C' over Serial to open Setup.
-   ==================================================
-   [OK] MAX30102 initialized successfully!
-   [OK] MPU6050 initialized successfully!
-   [WiFi] Connected successfully!
-   [WiFi] ESP32 Local IP Address: 192.168.1.120
-   [MQTT] Connecting to broker 192.168.1.100:1883... CONNECTED!
-   [MQTT PUBLISH SUCCESS] {"deviceId":"ESP32-HW-001","sequence":1,"uptimeMs":5012,"bootId":"BOOT-4A2B1C3D-8F7E6D5C","source":"hardware","hrBpm":72.0,"pulseRmssdMs":48.5,"motion":0.04,"quality":"good"}
-   ```
+References: repository source/configuration; observed development logs; Mosquitto listener guidance (https://mosquitto.org/documentation/migrating-to-2-0/); Homebrew Mosquitto formula (https://formulae.brew.sh/formula/mosquitto); Espressif Arduino documentation (https://docs.espressif.com/projects/arduino-esp32/en/latest/).

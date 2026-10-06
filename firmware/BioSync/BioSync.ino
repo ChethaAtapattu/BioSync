@@ -182,6 +182,24 @@ void setup() {
 }
 
 void loop() {
+    static uint32_t lastSensorCheck = 0;
+
+    if (millis() - lastSensorCheck >= 5000) {
+        lastSensorCheck = millis();
+
+        const uint8_t addresses[] = {0x57, 0x68};
+
+        for (uint8_t address : addresses) {
+            Wire.beginTransmission(address);
+            uint8_t error = Wire.endTransmission();
+
+            Serial.printf(
+                "[I2C CHECK] 0x%02X: %s\n",
+                address,
+                error == 0 ? "DETECTED" : "NOT DETECTED"
+            );
+        }
+    }
     uint32_t nowMs = millis();
 
     // 1. Check Serial commands and BOOT button press for reopening setup portal

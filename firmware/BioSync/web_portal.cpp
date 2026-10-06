@@ -12,20 +12,20 @@ WebPortalManager::WebPortalManager()
 void WebPortalManager::begin() {
     prefs.begin(PREFS_NAMESPACE, false);
     loadConfig(currentConfig);
-
     setupRoutes();
-    server.begin();
 
-    if (!currentConfig.configured || strlen(currentConfig.wifiSsid) == 0) {
-        Serial.println("[NVS] No saved Wi-Fi configuration found. Starting Access Point mode...");
+    if (!currentConfig.configured ||
+        strlen(currentConfig.wifiSsid) == 0) {
+        Serial.println("[NVS] Starting setup access point...");
         startAPMode();
     } else {
-        Serial.println("[NVS] Loaded stored settings from Preferences NVS:");
-        Serial.print("  Wi-Fi SSID: "); Serial.println(currentConfig.wifiSsid);
-        Serial.print("  MQTT Host:  "); Serial.print(currentConfig.mqttHost);
-        Serial.print(":"); Serial.println(currentConfig.mqttPort);
+        Serial.println("[NVS] Connecting with saved settings...");
         connectWiFi();
     }
+
+    // Start the server AFTER Wi-Fi is initialized.
+    server.begin();
+    Serial.println("[WEB] Setup server started.");
 }
 
 bool WebPortalManager::loadConfig(BioSyncDeviceConfig &config) {
