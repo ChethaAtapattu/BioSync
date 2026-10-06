@@ -84,32 +84,31 @@ Open **Tools -> Manage Libraries...** (Ctrl+Shift+I / Cmd+Shift+I) and install:
 For detailed local broker setup, listener configuration (`listener 1883 0.0.0.0`), finding laptop LAN IP, firewall rules, and CLI testing, consult:
 👉 [`docs/MOSQUITTO_SETUP.md`](file:///Users/chethaatapattu/BioSync/docs/MOSQUITTO_SETUP.md)
 
-### D. Sketch Configuration & Upload Instructions
+### D. ESP32 Web Setup Portal Procedure (No Hardcoded Credentials)
 1. Open the sketch: **File -> Open...** -> select `firmware/BioSync/BioSync.ino`.
-2. Edit `firmware/BioSync/config.h` to set your Wi-Fi credentials and local Mosquitto MQTT broker IP:
-   ```cpp
-   #define WIFI_SSID "YOUR_WIFI_SSID"
-   #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
-   #define MQTT_BROKER_HOST "192.168.1.100" // Local Mosquitto IP
-   ```
-3. Connect your **ESP32-WROOM-32** board via USB data cable.
-4. Select Port: **Tools -> Port -> /dev/cu.usbserial-...** (or COM port on Windows).
-5. Click **Upload** (Right Arrow button).
+2. Connect your **ESP32-WROOM-32** board via USB data cable.
+3. Select Port: **Tools -> Port -> /dev/cu.usbserial-...** (or COM port on Windows) and click **Upload**.
+4. On first boot (or if credentials are erased), the ESP32 creates an Access Point:
+   - **Wi-Fi AP Name**: `BioSync-Setup`
+   - **WPA2 Password**: `biosyncsetup`
+5. Connect your laptop or phone to `BioSync-Setup` Wi-Fi, open browser to **`http://192.168.4.1`**, enter your Wi-Fi SSID, Password, local Mosquitto Broker IP (e.g. `192.168.1.100`), and Port (`1883`), and click **Save & Connect**.
+6. Stored credentials persist securely in ESP32 Preferences NVS across reboots. Connection status is shown on the setup page without revealing stored passwords.
 
-### E. Serial Monitor Debugging Steps
-1. Open **Tools -> Serial Monitor** and set baud rate to **115200 baud**.
-2. Press the **EN / RST** button on the ESP32 board.
-3. Verify initialization output:
+### E. Reopening Configuration & Serial Monitor Debugging
+- **Reopen Portal via BOOT Button**: Hold the **BOOT button (GPIO 0)** on the ESP32 for 3 seconds (or hold during boot) to clear settings and start `BioSync-Setup` AP mode.
+- **Reopen Portal via Serial Monitor**: Open **Tools -> Serial Monitor** at **115200 baud**, and type **`C`** (or `config`/`reset`).
+- **Serial Diagnostics Output**:
    ```text
-   =============================================
-   BioSync Hardware Firmware — Arduino IDE Sketch
+   ==================================================
+   BioSync Hardware Firmware — ESP32-WROOM-32
    Boot ID: BOOT-4A2B1C3D-8F7E6D5C
-   Target: ESP32-WROOM-32 (MAX30102 + MPU6050)
-   =============================================
+   Web Setup Portal & NVS Preferences Enabled
+   Press BOOT button (GPIO 0) or send 'C' over Serial to open Setup.
+   ==================================================
    [OK] MAX30102 initialized successfully!
    [OK] MPU6050 initialized successfully!
    [WiFi] Connected successfully!
-   [WiFi] ESP32 IP Address: 192.168.1.120
+   [WiFi] ESP32 Local IP Address: 192.168.1.120
    [MQTT] Connecting to broker 192.168.1.100:1883... CONNECTED!
    [MQTT PUBLISH SUCCESS] {"deviceId":"ESP32-HW-001","sequence":1,"uptimeMs":5012,"bootId":"BOOT-4A2B1C3D-8F7E6D5C","source":"hardware","hrBpm":72.0,"pulseRmssdMs":48.5,"motion":0.04,"quality":"good"}
    ```

@@ -1,16 +1,20 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// --- WiFi & MQTT Configuration ---
-#define WIFI_SSID "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+// --- Access Point & Setup Portal Defaults ---
+#define AP_SSID "BioSync-Setup"
+#define AP_PASSWORD "biosyncsetup" // WPA2 Password-protected Access Point
+#define AP_IP_ADDR "192.168.4.1"
 
-#define MQTT_BROKER_HOST "192.168.1.100" // Replace with local Mosquitto IP
-#define MQTT_BROKER_PORT 1883
+// --- NVS Storage Namespace & Default Fallbacks ---
+#define PREFS_NAMESPACE "biosync"
+#define DEFAULT_MQTT_HOST "192.168.1.100"
+#define DEFAULT_MQTT_PORT 1883
 #define DEVICE_ID "ESP32-HW-001"
 #define MQTT_TOPIC_VITALS "biosync/ESP32-HW-001/vitals"
 
-// --- Hardware Pinouts & I2C ---
+// --- Hardware Pins & Control Buttons ---
+#define SETUP_BUTTON_PIN 0 // BOOT button on standard ESP32 (GPIO 0)
 #define SDA_PIN 21
 #define SCL_PIN 22
 #define I2C_CLOCK_SPEED 400000 // 400 kHz Fast-mode I2C

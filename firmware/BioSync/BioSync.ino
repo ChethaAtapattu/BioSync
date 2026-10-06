@@ -3,6 +3,7 @@
   Target: ESP32-WROOM-32 (ESP32 Dev Module)
   Sensors: SparkFun MAX30102 (Pulse Oximeter) & Adafruit MPU6050 (6-DOF Accel/Gyro)
   Transport: MQTT over Wi-Fi (Topic: biosync/ESP32-HW-001/vitals)
+  Configuration: ESP32 Web Setup Portal (BioSync-Setup Access Point + NVS Preferences)
 */
 
 #include <Arduino.h>
@@ -16,6 +17,7 @@
 #include <Adafruit_Sensor.h>
 
 #include "config.h"
+#include "web_portal.h"
 #include "pulse_processor.h"
 #include "motion_processor.h"
 
@@ -31,6 +33,7 @@ MotionProcessor motionProc;
 uint32_t sequenceNumber = 1;
 uint32_t lastPublishMs = 0;
 uint32_t lastSampleMs = 0;
+uint32_t buttonPressStartMs = 0;
 char bootId[32]; // Unique per-boot identifier for reboot tracking
 
 void generateBootId() {
@@ -39,34 +42,45 @@ void generateBootId() {
     snprintf(bootId, sizeof(bootId), "BOOT-%08X-%08X", r1, r2);
 }
 
-void setupWiFi() {
-    delay(10);
-    Serial.println("\n[WiFi] Connecting to SSID: " WIFI_SSID);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-    uint8_t attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 10) {
-        delay(300);
-        Serial.print(".");
-        attempts++;
+void checkReconfigTriggers() {
+    // 1. Check Serial Monitor Commands
+    if (Serial.available() > 0) {
+        String cmd = Serial.readStringUntil('\n');
+        cmd.trim();
+        cmd.toUpperCase();
+        if (cmd == "C" || cmd == "CONFIG" || cmd == "RESET") {
+            Serial.println("\n[SETUP TRIGGER] Serial 'C' command received! Erasing credentials & launching Access Point mode...");
+            webPortal.triggerReconfiguration();
+        }
     }
 
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\n[WiFi] Connected successfully!");
-        Serial.print("[WiFi] ESP32 IP Address: ");
-        Serial.println(WiFi.localIP());
+    // 2. Check BOOT Button (GPIO 0) holding for 3 seconds
+    if (digitalRead(SETUP_BUTTON_PIN) == LOW) {
+        if (buttonPressStartMs == 0) {
+            buttonPressStartMs = millis();
+        } else if (millis() - buttonPressStartMs > 3000) {
+            Serial.println("\n[SETUP TRIGGER] BOOT button (GPIO 0) held for 3s! Erasing credentials & launching Access Point mode...");
+            buttonPressStartMs = 0;
+            webPortal.triggerReconfiguration();
+        }
     } else {
-        Serial.println("\n[WiFi] Connection timed out. Non-blocking reconnect active in loop().");
+        buttonPressStartMs = 0;
     }
 }
 
 void reconnectMQTT() {
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    const BioSyncDeviceConfig &cfg = webPortal.getConfig();
+    if (strlen(cfg.mqttHost) == 0) return;
+
+    mqttClient.setServer(cfg.mqttHost, cfg.mqttPort);
+
     if (!mqttClient.connected()) {
         Serial.print("[MQTT] Connecting to broker ");
-        Serial.print(MQTT_BROKER_HOST);
+        Serial.print(cfg.mqttHost);
         Serial.print(":");
-        Serial.print(MQTT_BROKER_PORT);
+        Serial.print(cfg.mqttPort);
         Serial.print("...");
 
         if (mqttClient.connect(DEVICE_ID)) {
@@ -110,7 +124,7 @@ void publishVitalsSummary() {
             Serial.print("[MQTT PUBLISH SUCCESS] ");
             Serial.println(buffer);
         } else {
-            Serial.print("[MQTT PUBLISH FAILED] Buffer length: ");
+            Serial.print("[MQTT PUBLISH FAILED] Length: ");
             Serial.println(len);
         }
     } else {
@@ -123,25 +137,19 @@ void setup() {
     Serial.begin(115200);
     while (!Serial && millis() < 3000);
 
+    pinMode(SETUP_BUTTON_PIN, INPUT_PULLUP);
+
     generateBootId();
 
-    Serial.println("\n=============================================");
-    Serial.println("BioSync Hardware Firmware — Arduino IDE Sketch");
-    Serial.print("Boot ID: ");
-    Serial.println(bootId);
-    Serial.println("Target: ESP32-WROOM-32 (MAX30102 + MPU6050)");
-    Serial.println("=============================================");
+    Serial.println("\n==================================================");
+    Serial.println("BioSync Hardware Firmware — ESP32-WROOM-32");
+    Serial.print("Boot ID: "); Serial.println(bootId);
+    Serial.println("Web Setup Portal & NVS Preferences Enabled");
+    Serial.println("Press BOOT button (GPIO 0) or send 'C' over Serial to open Setup.");
+    Serial.println("==================================================\n");
 
     Wire.begin(SDA_PIN, SCL_PIN, I2C_CLOCK_SPEED);
 
-    // Initialize MAX30102 using SparkFun library's numeric API:
-    // setup(0x1F, 1, 2, 100, 411, 4096)
-    // 0x1F = powerLevel (6.4mA LED current)
-    // 1 = sampleAverage (1x / no sample averaging)
-    // 2 = ledMode (2 = Red + IR mode)
-    // 100 = sampleRate (100 samples/second)
-    // 411 = pulseWidth (411 microsecond pulse width)
-    // 4096 = adcRange (4096 ADC range / 15-bit)
     if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
         Serial.println("[ERROR] MAX30102 pulse sensor not found at 0x57. Check SDA/SCL wiring!");
     } else {
@@ -151,7 +159,6 @@ void setup() {
         particleSensor.setPulseAmplitudeGreen(0);
     }
 
-    // Initialize MPU6050
     if (!mpu.begin()) {
         Serial.println("[ERROR] MPU6050 accelerometer not found at 0x68. Check SDA/SCL wiring!");
     } else {
@@ -162,17 +169,28 @@ void setup() {
 
     pulseProc.init();
 
-    // Configure PubSubClient packet buffer size to 512 bytes to accommodate bootId and payload
     mqttClient.setBufferSize(512);
-    mqttClient.setServer(MQTT_BROKER_HOST, MQTT_BROKER_PORT);
 
-    setupWiFi();
+    // Initialize Preferences & Web Setup Portal (or load stored WiFi/MQTT credentials)
+    webPortal.begin();
+
+    // If BOOT button pressed at startup, force setup AP mode immediately
+    if (digitalRead(SETUP_BUTTON_PIN) == LOW) {
+        Serial.println("[SETUP TRIGGER] BOOT button pressed during startup! Launching Access Point mode...");
+        webPortal.triggerReconfiguration();
+    }
 }
 
 void loop() {
     uint32_t nowMs = millis();
 
-    // 1. Non-blocking continuous 100Hz I2C sampling via MAX3010x FIFO check (Executed BEFORE network calls)
+    // 1. Check Serial commands and BOOT button press for reopening setup portal
+    checkReconfigTriggers();
+
+    // 2. Handle HTTP Setup Portal requests non-blockingly
+    webPortal.handleClient();
+
+    // 3. Non-blocking continuous 100Hz I2C sampling via MAX3010x FIFO (Runs during AP mode & network failures!)
     if (nowMs - lastSampleMs >= 10) {
         lastSampleMs = nowMs;
 
@@ -191,7 +209,7 @@ void loop() {
         }
     }
 
-    // 2. Non-blocking WiFi & MQTT Reconnect Logic (Never blocks continuous 100Hz sampling)
+    // 4. Non-blocking WiFi & MQTT Reconnect Logic
     if (WiFi.status() == WL_CONNECTED) {
         if (!mqttClient.connected()) {
             static uint32_t lastMqttReconnect = 0;
@@ -204,7 +222,7 @@ void loop() {
         }
     }
 
-    // 3. Publish Summary Telemetry Payload Every 5 Seconds
+    // 5. Publish Summary Telemetry Payload Every 5 Seconds (Log to Serial if MQTT offline)
     if (nowMs - lastPublishMs >= TELEMETRY_PUBLISH_INTERVAL_MS) {
         lastPublishMs = nowMs;
         publishVitalsSummary();

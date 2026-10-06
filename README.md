@@ -112,22 +112,36 @@ $$\text{score} = \text{clamp}(\text{base} - \text{penalty}, 0, 100)$$
 
 ---
 
-## 5. Arduino IDE Firmware & Hardware Setup
+## 5. Arduino IDE Firmware & ESP32 Web Setup Portal
 
 ### Required Board Package & Libraries
 - **Board Package**: Espressif ESP32 (`https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`), select board **ESP32 Dev Module**.
-- **Required Libraries**:
-  1. `PubSubClient` by Nick O'Leary (`mqttClient.setBufferSize(512)`)
-  2. `ArduinoJson` by Benoit Blanchon (v6.21.4)
-  3. `SparkFun MAX3010x Pulse and Proximity Sensor Library` (`setup(0x1F, 1, 2, 100, 411, 4096)`)
-  4. `Adafruit MPU6050`
-  5. `Adafruit Unified Sensor`
+- **Required Built-in & Third-Party Libraries**:
+  1. `Preferences` & `WebServer` & `DNSServer` (ESP32 Built-in)
+  2. `PubSubClient` by Nick O'Leary (`mqttClient.setBufferSize(512)`)
+  3. `ArduinoJson` by Benoit Blanchon (v6.21.4)
+  4. `SparkFun MAX3010x Pulse and Proximity Sensor Library` (`setup(0x1F, 1, 2, 100, 411, 4096)`)
+  5. `Adafruit MPU6050` & `Adafruit Unified Sensor`
 
-### Arduino IDE Sketch Path & Upload
-- Open sketch at: `firmware/BioSync/BioSync.ino`.
-- Configure `firmware/BioSync/config.h` with Wi-Fi SSID, Password, and local Mosquitto IP.
-- Connect ESP32 via USB and click **Upload**.
-- Monitor debug output via **Serial Monitor** at **115200 baud**.
+### Evaluator Wi-Fi & MQTT Web Setup Procedure
+Instead of hardcoding Wi-Fi credentials or broker IP addresses, the ESP32 provides a password-protected **Web Setup Portal**:
+
+1. **Power On**: Flash `firmware/BioSync/BioSync.ino` using Arduino IDE and open Serial Monitor at **115200 baud**.
+2. **Connect to Access Point**: On first boot (or if credentials are erased), the ESP32 creates an AP:
+   - **Access Point SSID**: `BioSync-Setup`
+   - **WPA2 Password**: `biosyncsetup`
+3. **Open Configuration Portal**: Navigate to **`http://192.168.4.1`** in any browser (or follow automatic captive portal redirect).
+4. **Configure & Save**: Enter your local Wi-Fi SSID, Wi-Fi Password, local Mosquitto Broker IP (e.g. `192.168.1.50`), and Port (`1883`). Click **Save & Connect**. Settings persist in ESP32 Preferences NVS across reboots.
+5. **Security**: Connection status is displayed on the portal without showing stored passwords.
+
+### Reopening the Setup Portal
+To change Wi-Fi networks or MQTT broker addresses later:
+- **BOOT Button (GPIO 0)**: Hold the BOOT button on the ESP32 for 3 seconds (or hold during startup) to erase settings and launch AP mode.
+- **Serial Monitor Command**: Type **`C`** (or `config`/`reset`) in the Serial Monitor at **115200 baud**.
+- **Web Portal Button**: Click **Clear Stored Credentials** on `http://192.168.4.1`.
+
+### Non-blocking Acquisition Guarantee
+Continuous 100Hz MAX30102 pulse reading and MPU6050 accelerometer tracking run uninterrupted during network disconnects, Wi-Fi reconnects, or active Web Setup AP mode.
 
 ---
 
